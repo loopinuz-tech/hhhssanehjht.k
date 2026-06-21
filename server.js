@@ -51,7 +51,12 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.educontest.uz')) {
+    if (!origin || 
+        allowedOrigins.includes(origin) || 
+        origin.endsWith('.educontest.uz') ||
+        origin.includes('localhost') ||
+        origin.includes('127.0.0.1') ||
+        origin.includes('::1')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -81,20 +86,28 @@ const supabaseProxy = createProxyMiddleware({
       const ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
       if (ANON_KEY) {
         proxyReq.setHeader('apikey', ANON_KEY);
-        if (!req.headers.authorization) {
-          proxyReq.setHeader('Authorization', `Bearer ${ANON_KEY}`);
-        }
       }
 
+      // Prefer client Authorization header (Supabase SDK auto-refreshes tokens),
+      // fallback to cookie token, then to ANON_KEY
+      const clientAuth = req.headers.authorization;
       const accessToken = req.cookies?.['sb-access-token'];
-      if (!req.headers.authorization && accessToken) {
+
+      if (clientAuth && clientAuth.startsWith('Bearer ') && ANON_KEY && !clientAuth.endsWith(ANON_KEY)) {
+        proxyReq.setHeader('Authorization', clientAuth);
+      } else if (accessToken) {
         proxyReq.setHeader('Authorization', `Bearer ${accessToken}`);
+      } else if (ANON_KEY) {
+        proxyReq.setHeader('Authorization', `Bearer ${ANON_KEY}`);
       }
     } catch (err) {
       console.error('Proxy auth injection failed:', err);
     }
   },
   onProxyRes: (proxyRes, req, res) => {
+    // Supabase Storage `same-origin` CORP header'ini override qilish
+    proxyRes.headers['cross-origin-resource-policy'] = 'cross-origin';
+    proxyRes.headers['access-control-allow-origin'] = '*';
     console.log(`[Proxy Res] ${req.method} ${req.url} -> ${proxyRes.statusCode}`);
   }
 });
@@ -102,7 +115,7 @@ const supabaseProxy = createProxyMiddleware({
 // Proxy routes (MUST be before express.json() for POST requests to work)
 app.use(['/auth/v1', '/rest/v1', '/storage/v1', '/functions/v1', '/realtime/v1'], supabaseProxy);
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 
 // Clients
@@ -453,7 +466,10 @@ app.post('/api/admin/:table', adminRequired, async (req, res) => {
  * STORAGE: Upload Proxy
  */
 const multer = require('multer');
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB max
+});
 
 app.post('/api/storage/upload/:bucket', authRequired, upload.single('file'), async (req, res) => {
   const { bucket } = req.params;
