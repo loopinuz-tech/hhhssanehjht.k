@@ -119,7 +119,7 @@ app.use(['/auth/v1', '/rest/v1', '/storage/v1', '/functions/v1', '/realtime/v1']
 app.use(express.json({ limit: '50mb' }));
 
 // PDF parse
-const pdfParse = require('pdf-parse');
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 
 
 // Clients
@@ -594,8 +594,15 @@ app.post('/api/pdf/extract', upload.single('pdf'), async (req, res) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'PDF fayl yuklanmadi' });
 
-    const data = await pdfParse(file.buffer);
-    res.json({ text: data.text, pages: data.numpages });
+    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(file.buffer) }).promise;
+    let text = '';
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(item => item.str).join(' ') + '\n\n';
+    }
+
+    res.json({ text, pages: doc.numPages });
   } catch (err) {
     console.error('[PDF] Parse error:', err);
     res.status(500).json({ error: 'PDF o\'qishda xatolik', details: err.message });
