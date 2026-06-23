@@ -30,8 +30,8 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz"],
-      connectSrc: ["'self'", "https://*.supabase.co", "https://api.telegram.org"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz", "https://mc.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com"],
+      connectSrc: ["'self'", "https://*.supabase.co", "https://api.telegram.org", "https://mc.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com"],
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       fontSrc: ["'self'", "https://fonts.gstatic.com", "https://fonts.googleapis.com", "data:", "https://cdn.jsdelivr.net"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"],
