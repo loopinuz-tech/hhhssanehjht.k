@@ -30,16 +30,17 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz", "https://mc.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com"],
-      connectSrc: ["'self'", "https://*.supabase.co", "https://api.telegram.org", "https://mc.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz", "https://mc.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com", "https://cdn.onesignal.com", "https://api.onesignal.com"],
+      connectSrc: ["'self'", "https://*.supabase.co", "https://api.telegram.org", "https://mc.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com", "https://onesignal.com", "https://cdn.onesignal.com", "https://api.onesignal.com", "wss:"],
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       fontSrc: ["'self'", "https://fonts.gstatic.com", "https://fonts.googleapis.com", "data:", "https://cdn.jsdelivr.net"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"],
-      frameSrc: ["'none'"],
+      frameSrc: ["'self'", "https://accounts.google.com", "https://mc.yandex.ru", "https://webvisor.com"],
+      workerSrc: ["'self'", "blob:"],
       objectSrc: ["'none'"],
     },
   },
-  xFrameOptions: { action: "sameorigin" },
+  xFrameOptions: false,
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
 }));
 
@@ -116,6 +117,9 @@ const supabaseProxy = createProxyMiddleware({
 app.use(['/auth/v1', '/rest/v1', '/storage/v1', '/functions/v1', '/realtime/v1'], supabaseProxy);
 
 app.use(express.json({ limit: '50mb' }));
+
+// PDF parse
+const pdfParse = require('pdf-parse');
 
 
 // Clients
@@ -579,6 +583,22 @@ app.post('/api/ai/chat', authRequired, async (req, res) => {
   } catch (err) {
     console.error('[AI] Critical error:', err);
     res.status(500).json({ error: 'Internal server error', details: err.message });
+  }
+});
+
+/**
+ * PDF: Extract text from uploaded PDF
+ */
+app.post('/api/pdf/extract', upload.single('pdf'), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'PDF fayl yuklanmadi' });
+
+    const data = await pdfParse(file.buffer);
+    res.json({ text: data.text, pages: data.numpages });
+  } catch (err) {
+    console.error('[PDF] Parse error:', err);
+    res.status(500).json({ error: 'PDF o\'qishda xatolik', details: err.message });
   }
 });
 
