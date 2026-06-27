@@ -609,6 +609,276 @@ app.post('/api/pdf/extract', upload.single('pdf'), async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// SOCIAL AUTOMATION: Auto-Blog, Social Publish, Notify Admin
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * ADMIN: Auto-generate blog post via AI
+ */
+app.post('/api/admin/auto-blog', adminRequired, async (req, res) => {
+  try {
+    const rssRes = await fetch('https://news.google.com/rss/search?q=education+uzbekistan+ta%27lim&hl=uz&gl=UZ&ceid=UZ:uz');
+    const rssText = await rssRes.text();
+    const titleMatch = rssText.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/);
+    const descMatch = rssText.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/);
+    const linkMatch = rssText.match(/<link>(https:\/\/news\.google\.com\/[^<]+)<\/link>/);
+
+    const newsTitle = titleMatch?.[1] || "O'zbekistonda ta'lim sohasida yangiliklar";
+    const newsDesc = descMatch?.[1] || '';
+    const newsLink = linkMatch?.[1] || '';
+
+    const mistralKey = process.env.MISTRAL_API_KEY;
+    if (!mistralKey) return res.status(500).json({ error: 'MISTRAL_API_KEY not set' });
+
+    const aiRes = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${mistralKey}` },
+      body: JSON.stringify({
+        model: 'mistral-large-latest',
+        messages: [
+          {
+            role: 'system',
+            content: `Siz EduContest platformasi uchun blog post yozasiz. Faqat JSON qaytaring:
+{"title":"Sarlavha","excerpt":"2-3 jumlali qisqacha tavsif","content":"HTML formatda to'liq maqola (h2, p, ul/li, blockquote ishlating). 400-600 so'z. O'zbek tilida.","tag":"Yangilik, Ta'lim"}
+HTML content da xavfsizlik uchun faqat h2, p, ul, li, ol, blockquote, strong, em, a taglarini ishlating.`
+          },
+          {
+            role: 'user',
+            content: `Quyidagi yangilik asosida blog post yozing:\n\nSarlavha: ${newsTitle}\nTavsif: ${newsDesc}\nManba: ${newsLink}`
+          }
+        ]
+      })
+    });
+    const aiData = await aiRes.json();
+    const raw = aiData.choices?.[0]?.message?.content || '';
+
+    let blogData;
+    try {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      blogData = JSON.parse(jsonMatch?.[0] || raw);
+    } catch { blogData = null; }
+    if (!blogData) return res.status(500).json({ error: 'AI JSON parse failed', raw });
+
+    const gKey = process.env.GOOGLE_SEARCH_API_KEY;
+    const gCx = process.env.GOOGLE_SEARCH_CX;
+    let coverImageUrl = '';
+    if (gKey && gCx) {
+      try {
+        const imgRes = await fetch(`https://www.googleapis.com/customsearch/v1?key=${gKey}&cx=${gCx}&q=${encodeURIComponent(blogData.title)}&searchType=image&num=1&imgSize=LARGE`);
+        const imgData = await imgRes.json();
+        coverImageUrl = imgData.items?.[0]?.link || '';
+      } catch {}
+    }
+
+    const slug = blogData.title
+      .toLowerCase()
+      .replace(/[o'og]/g, 'o').replace(/['']/g, '')
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .slice(0, 80);
+
+    const { data: post, error } = await supabase.from('blog_posts').insert({
+      title: blogData.title,
+      slug,
+      excerpt: blogData.excerpt,
+      content: blogData.content,
+      cover_image_url: coverImageUrl,
+      tag: blogData.tag || 'Yangilik, Ta\'lim',
+      author_name: 'EduContest AI',
+      is_published: true,
+      published_at: new Date().toISOString(),
+    }).select().single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    try {
+      const fnRes = await fetch(`${SUPABASE_URL}/functions/v1/social-publish`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        },
+        body: JSON.stringify({ blog_post_id: post.id }),
+      });
+      console.log('[AutoBlog] Social publish response:', fnRes.status);
+    } catch (e) { console.log('[AutoBlog] Social publish failed:', e.message); }
+
+    res.json({ success: true, post });
+  } catch (err) {
+    console.error('[AutoBlog] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * ADMIN: Manually publish blog post to social media
+ */
+app.post('/api/admin/social-publish', adminRequired, async (req, res) => {
+  try {
+    const { blog_post_id } = req.body;
+    if (!blog_post_id) return res.status(400).json({ error: 'blog_post_id required' });
+
+    const fnRes = await fetch(`${SUPABASE_URL}/functions/v1/social-publish`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE}`,
+      },
+      body: JSON.stringify({ blog_post_id }),
+    });
+    const data = await fnRes.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * ADMIN: Send admin notification
+ */
+app.post('/api/admin/notify', adminRequired, async (req, res) => {
+  try {
+    const { type, data } = req.body;
+    const fnRes = await fetch(`${SUPABASE_URL}/functions/v1/notify-admin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE}`,
+      },
+      body: JSON.stringify({ type, data }),
+    });
+    const result = await fnRes.json();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * ADMIN: Get social media analytics
+ */
+app.get('/api/admin/social-analytics', adminRequired, async (req, res) => {
+  try {
+    const { count: totalPosts } = await supabase.from('blog_posts').select('*', { count: 'exact', head: true });
+    const { count: publishedPosts } = await supabase.from('blog_posts').select('*', { count: 'exact', head: true }).eq('is_published', true);
+    const { data: recentPosts } = await supabase.from('blog_posts').select('id, title, views, created_at').order('created_at', { ascending: false }).limit(5);
+
+    const { data: socialPosts } = await supabase.from('social_posts').select('platform, status, created_at');
+
+    const telegramCount = socialPosts?.filter(p => p.platform === 'telegram').length || 0;
+    const youtubeCount = socialPosts?.filter(p => p.platform === 'youtube').length || 0;
+    const instagramCount = socialPosts?.filter(p => p.platform === 'instagram').length || 0;
+    const publishedCount = socialPosts?.filter(p => p.status === 'published').length || 0;
+    const failedCount = socialPosts?.filter(p => p.status === 'failed').length || 0;
+
+    let youtubeStats = null;
+    try {
+      const { data: ytToken } = await supabase.from('oauth_tokens').select('*').eq('provider', 'youtube').single();
+      if (ytToken?.access_token && process.env.YOUTUBE_API_KEY) {
+        const ytRes = await fetch(`https://youtube.googleapis.com/youtube/v3/channels?part=statistics&id=UCNAusixBqK0yaRvJSmE2iFg&key=${process.env.YOUTUBE_API_KEY}`);
+        const ytData = await ytRes.json();
+        youtubeStats = ytData.items?.[0]?.statistics || null;
+      }
+    } catch {}
+
+    const today = new Date().toISOString().split('T')[0];
+    const { count: newUsersToday } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).gte('created_at', `${today}T00:00:00`);
+
+    res.json({
+      blog: { total: totalPosts || 0, published: publishedPosts || 0, recent: recentPosts || [] },
+      social: { telegram: telegramCount, youtube: youtubeCount, instagram: instagramCount, published: publishedCount, failed: failedCount },
+      youtube: youtubeStats,
+      newUsersToday: newUsersToday || 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * YOUTUBE: OAuth2 - Authorize
+ */
+app.get('/api/auth/youtube/authorize', adminRequired, (req, res) => {
+  const clientId = process.env.YOUTUBE_CLIENT_ID;
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/youtube/callback`;
+  const scopes = ['https://www.googleapis.com/auth/youtube'];
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes.join(' '))}&access_type=offline&prompt=consent`;
+  res.redirect(url);
+});
+
+/**
+ * YOUTUBE: OAuth2 - Callback
+ */
+app.get('/api/auth/youtube/callback', adminRequired, async (req, res) => {
+  try {
+    const { code } = req.query;
+    if (!code) return res.status(400).json({ error: 'No code' });
+
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.YOUTUBE_CLIENT_ID,
+        client_secret: process.env.YOUTUBE_CLIENT_SECRET,
+        redirect_uri: `${req.protocol}://${req.get('host')}/api/auth/youtube/callback`,
+        grant_type: 'authorization_code',
+      }),
+    });
+    const tokens = await tokenRes.json();
+    if (!tokens.access_token) return res.status(400).json({ error: 'Token exchange failed', tokens });
+
+    const expiresAt = new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString();
+
+    await supabase.from('oauth_tokens').upsert({
+      provider: 'youtube',
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: expiresAt,
+      channel_id: 'UCNAusixBqK0yaRvJSmE2iFg',
+    }, { onConflict: 'provider' });
+
+    res.send(`
+      <html><body style="font-family:system-ui;text-align:center;padding:50px">
+        <h2>YouTube muvaffaqiyatli bog'landi!</h2>
+        <p>Endi blog postlaringiz avtomatik YouTube Community Post ga joylanadi.</p>
+        <script>setTimeout(() => window.close(), 2000);</script>
+      </body></html>
+    `);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * HOOKS: New user/feedback → notify admin
+ */
+app.post('/api/hooks/new-user', async (req, res) => {
+  try {
+    const { user_id, full_name, phone } = req.body;
+    await fetch(`${SUPABASE_URL}/functions/v1/notify-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE}` },
+      body: JSON.stringify({ type: 'new_user', data: { name: full_name || 'Noma\'lum', phone: phone || 'Yo\'q' } }),
+    });
+    res.json({ success: true });
+  } catch { res.json({ success: true }); }
+});
+
+app.post('/api/hooks/feedback', async (req, res) => {
+  try {
+    const { name, message, email } = req.body;
+    await fetch(`${SUPABASE_URL}/functions/v1/notify-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE}` },
+      body: JSON.stringify({ type: 'feedback', data: { name: name || 'Noma\'lum', message: message || '', email: email || '' } }),
+    });
+    res.json({ success: true });
+  } catch { res.json({ success: true }); }
+});
+
 // --- HEALTH CHECK ---
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
