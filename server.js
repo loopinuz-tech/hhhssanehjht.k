@@ -177,7 +177,12 @@ const adminRequired = async (req, res, next) => {
  * Primary: UzbekVoice.ai (natural Uzbek voices)
  * Fallback: Microsoft Edge TTS (free, good quality)
  */
-const { Communicate } = require('edge-tts-universal');
+let Communicate = null;
+try {
+  Communicate = require('edge-tts-universal').Communicate;
+} catch (e) {
+  console.warn('[TTS] edge-tts-universal not available, Edge TTS fallback disabled');
+}
 
 const UZBEKVOICE_API_KEY = process.env.UZBEKVOICE_API_KEY || '88fb04ea-d029-423f-9a0e-1de5747dad77:b5368080-49a2-4b32-b5a2-40e4f28b33ae';
 const UZBEKVOICE_API_URL = 'https://uzbekvoice.ai/api/v1/tts';
@@ -248,6 +253,9 @@ app.post('/api/tts', async (req, res) => {
     }
 
     // Fallback: Microsoft Edge TTS
+    if (!Communicate) {
+      return res.status(503).json({ error: 'Edge TTS module not available' });
+    }
     const edgeVoice = voiceConfig.provider === 'edge' ? voiceConfig.voice : 'uz-UZ-SardorNeural';
     const communicate = new Communicate(cleanedText, edgeVoice, { rate, pitch });
     const chunks = [];
@@ -536,11 +544,17 @@ app.post('/api/admin/:table', adminRequired, async (req, res) => {
 /**
  * STORAGE: Upload Proxy
  */
-const multer = require('multer');
-const upload = multer({ 
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 } // 100MB max
-});
+let multer = null;
+let upload = null;
+try {
+  multer = require('multer');
+  upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 100 * 1024 * 1024 }
+  });
+} catch (e) {
+  console.warn('[Storage] multer not available, upload disabled');
+}
 
 app.post('/api/storage/upload/:bucket', authRequired, upload.single('file'), async (req, res) => {
   const { bucket } = req.params;
