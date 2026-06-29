@@ -36,7 +36,7 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz", "https://accounts.google.com", "https://mc.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com"],
-      connectSrc: ["'self'", "https://*.supabase.co", "https://api.educontest.uz", "https://api.telegram.org", "https://cloudflareinsights.com", "https://mc.yandex.ru", "https://uaas.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com", "https://webvisor.com", "https://onesignal.com", "https://cdn.onesignal.com", "https://api.onesignal.com", "https://www.googletagmanager.com", "wss:"],
+      connectSrc: ["'self'", "https://*.supabase.co", "https://api.educontest.uz", "https://api.telegram.org", "https://cloudflareinsights.com", "https://mc.yandex.ru", "https://uaas.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com", "https://webvisor.com", "https://onesignal.com", "https://cdn.onesignal.com", "https://api.onesignal.com", "https://www.googletagmanager.com", "https://lottie.host", "wss:"],
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       fontSrc: ["'self'", "https://fonts.gstatic.com", "https://fonts.googleapis.com", "data:", "https://cdn.jsdelivr.net"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"],
