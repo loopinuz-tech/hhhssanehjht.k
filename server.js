@@ -1181,7 +1181,7 @@ app.post('/api/hooks/feedback', async (req, res) => {
 });
 
 // All other routes serve index.html (SPA fallback)
-app.get('*', (req, res) => {
+app.get('/{*splat}', (req, res) => {
   const indexPath = path.join(ROOT_DIR, 'dist', 'index.html');
   if (require('fs').existsSync(indexPath)) {
     res.sendFile(indexPath);
