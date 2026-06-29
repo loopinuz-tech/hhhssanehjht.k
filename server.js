@@ -701,7 +701,8 @@ app.get('/api/images/search', authRequired, async (req, res) => {
 
 // --- STATIC ASSETS ---
 
-app.use(express.static(path.join(__dirname, 'dist')));
+const ROOT_DIR = path.join(__dirname, '..');
+app.use(express.static(path.join(ROOT_DIR, 'dist')));
 
 // Helper: slugify for matching folder names to URL slugs
 const slugifyText = (text) => (text || '').toString().toLowerCase().trim()
@@ -716,7 +717,7 @@ const folderSeoCache = new Map();
 const FOLDER_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 app.get('/tests/folder/:slug', async (req, res) => {
-  const indexPath = path.join(__dirname, 'dist', 'index.html');
+  const indexPath = path.join(ROOT_DIR, 'dist', 'index.html');
   if (!require('fs').existsSync(indexPath)) {
     return res.status(404).send('Not Found');
   }
@@ -833,7 +834,7 @@ app.get('/tests/folder/:slug', async (req, res) => {
 
 // Dynamic SEO for /tests/details/:id routes
 app.get('/tests/details/:id', async (req, res) => {
-  const indexPath = path.join(__dirname, 'dist', 'index.html');
+  const indexPath = path.join(ROOT_DIR, 'dist', 'index.html');
   if (!require('fs').existsSync(indexPath)) {
     return res.status(404).send('Not Found');
   }
@@ -1181,7 +1182,7 @@ app.post('/api/hooks/feedback', async (req, res) => {
 
 // All other routes serve index.html (SPA fallback)
 app.get('*', (req, res) => {
-  const indexPath = path.join(__dirname, 'dist', 'index.html');
+  const indexPath = path.join(ROOT_DIR, 'dist', 'index.html');
   if (require('fs').existsSync(indexPath)) {
     res.sendFile(indexPath);
   } else {
