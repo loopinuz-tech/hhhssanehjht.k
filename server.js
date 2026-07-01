@@ -30,17 +30,16 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz", "https://mc.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com", "https://cdn.onesignal.com", "https://api.onesignal.com"],
-      connectSrc: ["'self'", "https://*.supabase.co", "https://api.telegram.org", "https://mc.yandex.ru", "https://cdn.jsdelivr.net", "https://unpkg.com", "https://onesignal.com", "https://cdn.onesignal.com", "https://api.onesignal.com", "https://lottie.host", "wss:"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz"],
+      connectSrc: ["'self'", "https://*.supabase.co", "https://api.telegram.org"],
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       fontSrc: ["'self'", "https://fonts.gstatic.com", "https://fonts.googleapis.com", "data:", "https://cdn.jsdelivr.net"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://*.payme.uz", "https://*.click.uz", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"],
-      frameSrc: ["'self'", "https://accounts.google.com", "https://mc.yandex.ru", "https://webvisor.com"],
-      workerSrc: ["'self'", "blob:"],
+      frameSrc: ["'none'"],
       objectSrc: ["'none'"],
     },
   },
-  xFrameOptions: false,
+  xFrameOptions: { action: "sameorigin" },
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
 }));
 
@@ -52,12 +51,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || 
-        allowedOrigins.includes(origin) || 
-        origin.endsWith('.educontest.uz') ||
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1') ||
-        origin.includes('::1')) {
+    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.educontest.uz')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -87,28 +81,20 @@ const supabaseProxy = createProxyMiddleware({
       const ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
       if (ANON_KEY) {
         proxyReq.setHeader('apikey', ANON_KEY);
+        if (!req.headers.authorization) {
+          proxyReq.setHeader('Authorization', `Bearer ${ANON_KEY}`);
+        }
       }
 
-      // Prefer client Authorization header (Supabase SDK auto-refreshes tokens),
-      // fallback to cookie token, then to ANON_KEY
-      const clientAuth = req.headers.authorization;
       const accessToken = req.cookies?.['sb-access-token'];
-
-      if (clientAuth && clientAuth.startsWith('Bearer ') && ANON_KEY && !clientAuth.endsWith(ANON_KEY)) {
-        proxyReq.setHeader('Authorization', clientAuth);
-      } else if (accessToken) {
+      if (!req.headers.authorization && accessToken) {
         proxyReq.setHeader('Authorization', `Bearer ${accessToken}`);
-      } else if (ANON_KEY) {
-        proxyReq.setHeader('Authorization', `Bearer ${ANON_KEY}`);
       }
     } catch (err) {
       console.error('Proxy auth injection failed:', err);
     }
   },
   onProxyRes: (proxyRes, req, res) => {
-    // Supabase Storage `same-origin` CORP header'ini override qilish
-    proxyRes.headers['cross-origin-resource-policy'] = 'cross-origin';
-    proxyRes.headers['access-control-allow-origin'] = '*';
     console.log(`[Proxy Res] ${req.method} ${req.url} -> ${proxyRes.statusCode}`);
   }
 });
@@ -116,10 +102,7 @@ const supabaseProxy = createProxyMiddleware({
 // Proxy routes (MUST be before express.json() for POST requests to work)
 app.use(['/auth/v1', '/rest/v1', '/storage/v1', '/functions/v1', '/realtime/v1'], supabaseProxy);
 
-app.use(express.json({ limit: '50mb' }));
-
-// PDF parse
-const pdfjsLib = require('pdfjs-dist/build/pdf.js');
+app.use(express.json());
 
 
 // Clients
@@ -470,10 +453,7 @@ app.post('/api/admin/:table', adminRequired, async (req, res) => {
  * STORAGE: Upload Proxy
  */
 const multer = require('multer');
-const upload = multer({ 
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 } // 100MB max
-});
+const upload = multer({ storage: multer.memoryStorage() });
 
 app.post('/api/storage/upload/:bucket', authRequired, upload.single('file'), async (req, res) => {
   const { bucket } = req.params;
@@ -583,29 +563,6 @@ app.post('/api/ai/chat', authRequired, async (req, res) => {
   } catch (err) {
     console.error('[AI] Critical error:', err);
     res.status(500).json({ error: 'Internal server error', details: err.message });
-  }
-});
-
-/**
- * PDF: Extract text from uploaded PDF
- */
-app.post('/api/pdf/extract', upload.single('pdf'), async (req, res) => {
-  try {
-    const file = req.file;
-    if (!file) return res.status(400).json({ error: 'PDF fayl yuklanmadi' });
-
-    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(file.buffer) }).promise;
-    let text = '';
-    for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i);
-      const content = await page.getTextContent();
-      text += content.items.map(item => item.str).join(' ') + '\n\n';
-    }
-
-    res.json({ text, pages: doc.numPages });
-  } catch (err) {
-    console.error('[PDF] Parse error:', err);
-    res.status(500).json({ error: 'PDF o\'qishda xatolik', details: err.message });
   }
 });
 
