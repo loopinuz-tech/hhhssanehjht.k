@@ -119,7 +119,7 @@ app.use(['/auth/v1', '/rest/v1', '/storage/v1', '/functions/v1', '/realtime/v1']
 app.use(express.json({ limit: '50mb' }));
 
 // PDF parse
-const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const pdfjsLib = require('pdfjs-dist/build/pdf.js');
 
 
 // Clients
