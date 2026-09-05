@@ -1,0 +1,61 @@
+{
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=*, microphone=*, geolocation=(self), interest-cohort=()"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://*.payme.uz https://*.click.uz https://accounts.google.com https://static.cloudflareinsights.com https://mc.yandex.ru https://*.yandex.ru https://*.yandex.net https://cdn.onesignal.com https://api.onesignal.com https://onesignal.com https://www.googletagmanager.com https://consent.cookiebot.com https://consentcdn.cookiebot.com https://pagead2.googlesyndication.com https://*.googlesyndication.com https://googlesyndication.com https://*.doubleclick.net https://doubleclick.net https://*.googleadservices.com https://googleadservices.com https://*.google.com https://google.com https://*.adtrafficquality.google https://adtrafficquality.google; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://www.googletagmanager.com; img-src 'self' data: blob: https: https://mc.yandex.ru https://*.google-analytics.com https://*.googletagmanager.com https://*.googlesyndication.com https://googlesyndication.com https://*.doubleclick.net https://doubleclick.net https://*.gstatic.com https://gstatic.com https://*.google.com https://google.com https://*.adtrafficquality.google https://adtrafficquality.google; font-src 'self' https://fonts.gstatic.com https://fonts.googleapis.com data: https://cdn.jsdelivr.net; connect-src 'self' https://api.ipify.org https://ipapi.co https://*.payme.uz https://*.click.uz https://api.telegram.org https://*.supabase.co https://rlawsubbcfphsmqbteby.supabase.co https://api.educontest.uz https://*.educontest.uz https://lottie.host https://*.lottie.host https://uaas.yandex.ru https://*.yandex.ru https://*.yandex.net https://cloudflareinsights.com wss: https://mc.yandex.ru https://cdn.jsdelivr.net https://unpkg.com https://webvisor.com https://onesignal.com https://cdn.onesignal.com https://api.onesignal.com https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com https://consent.cookiebot.com https://consentcdn.cookiebot.com https://pagead2.googlesyndication.com https://*.googlesyndication.com https://googlesyndication.com https://*.doubleclick.net https://doubleclick.net https://*.googleadservices.com https://googleadservices.com https://*.google.com https://google.com https://*.adtrafficquality.google https://adtrafficquality.google; frame-src 'self' https://accounts.google.com https://mc.yandex.ru https://webvisor.com https://consent.cookiebot.com https://consentcdn.cookiebot.com https://googleads.g.doubleclick.net https://*.googlesyndication.com https://googlesyndication.com https://*.doubleclick.net https://doubleclick.net https://*.google.com https://google.com https://*.adtrafficquality.google https://adtrafficquality.google https://yandex.com https://*.yandex.com https://*.yandex.ru; object-src 'none'; base-uri 'self';"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/sitemap_index.xml",
+      "destination": "https://api.educontest.uz/api/sitemap_index.xml"
+    },
+    {
+      "source": "/sitemap_index",
+      "destination": "https://api.educontest.uz/api/sitemap_index.xml"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api/sitemap.js"
+    },
+    {
+      "source": "/sitemap",
+      "destination": "/api/sitemap.js"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://api.educontest.uz/api/:path*"
+    },
+    {
+      "source": "/auth/v1/:path*",
+      "destination": "https://api.educontest.uz/auth/v1/:path*"
+    },
+    {
+      "source": "/rest/v1/:path*",
+      "destination": "https://api.educontest.uz/rest/v1/:path*"
+    },
+    {
+      "source": "/storage/v1/:path*",
+      "destination": "https://api.educontest.uz/storage/v1/:path*"
+    },
+    {
+      "source": "/functions/v1/:path*",
+      "destination": "https://api.educontest.uz/functions/v1/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

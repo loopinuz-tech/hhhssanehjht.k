@@ -1,0 +1,50 @@
+# Dependencies
+node_modules
+npm-debug.log
+
+# Build output
+dist
+build
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Docker files (not needed inside container)
+Dockerfile
+docker-compose.yml
+nginx.conf
+
+# Test files
+coverage
+.nyc_output
+*.test.js
+*.spec.js
+
+# Documentation
+README.md
+docs
+
+# Other
+*.log
+logs
+tmp
+temp
+
+# SAT subdirectory (has its own Dockerfile)
+o'quvchi_SAT
