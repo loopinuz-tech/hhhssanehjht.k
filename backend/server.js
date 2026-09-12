@@ -523,6 +523,58 @@ app.post(['/api/telegram-webhook', '/functions/v1/telegram-bot'], async (req, re
       const chatId = message.chat?.id || message.from?.id;
 
       if (chatId && message.text && message.text.startsWith('/start')) {
+        const parts = message.text.trim().split(/\s+/);
+        const param = parts[1] || '';
+
+        if (param.startsWith('center_reg_') || param.startsWith('center_')) {
+          const rawToken = param.replace(/^center_/, '').trim(); // e.g. "reg_ABCDEF"
+          const cleanToken = rawToken.replace(/^reg_/, '').trim(); // e.g. "ABCDEF"
+          const tgUser = message.from?.username ? '@' + message.from.username : null;
+          const tgFirst = message.from?.first_name || 'Foydalanuvchi';
+
+          if (rawToken) {
+            try {
+              // Insert exact rawToken (matching the token polled by frontend)
+              await pgPool.query(
+                `INSERT INTO center_telegram_sessions (token, chat_id, username, first_name)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (token) DO UPDATE SET chat_id = $2, username = $3, first_name = $4`,
+                [rawToken, chatId, tgUser, tgFirst]
+              );
+
+              // Also insert cleanToken without prefix as fallback
+              if (cleanToken && cleanToken !== rawToken) {
+                await pgPool.query(
+                  `INSERT INTO center_telegram_sessions (token, chat_id, username, first_name)
+                   VALUES ($1, $2, $3, $4)
+                   ON CONFLICT (token) DO UPDATE SET chat_id = $2, username = $3, first_name = $4`,
+                  [cleanToken, chatId, tgUser, tgFirst]
+                ).catch(() => {});
+              }
+            } catch (sessErr) {
+              console.error('[Telegram Webhook Session Error]:', sessErr);
+            }
+
+            let regCode = String(Math.floor(100000 + Math.random() * 900000));
+            try {
+              await supabase.from('telegram_auth_codes').insert({
+                code: regCode,
+                chat_id: chatId,
+                phone: null,
+                full_name: tgFirst
+              });
+            } catch (cErr) {
+              console.warn('[Telegram Webhook Code Insert Error]:', cErr);
+            }
+
+            await sendTelegramMessage(
+              chatId,
+              `✅ <b>Telegram hisobingiz EduContest tizimiga bog'landi!</b>\n\nAssalomu alaykum, <b>${tgFirst}</b>!\nO'quv markazingiz arizasi uchun Telegram hisobingiz muvaffaqiyatli bog'landi.\n\n🔑 <b>Sizning 6 xonali tasdiqlash kodingiz:</b> <code>${regCode}</code>\n<i>(Agar saytda ulanish avtomatik ko'rinmasa, ushbu kodni kiriting)</i>\n\n📋 <i>Arizangiz EduContest ma'muriyati tomonidan tasdiqlangach, markaz boshqaruv panelining <b>login va paroli</b> ushbu bot orqali avtomatik tarzda sizga yuboriladi.</i>\n\n🌐 Ro'yxatdan o'tish sahifasiga qaytib, anketani yakunlang.`
+            );
+            return res.json({ ok: true });
+          }
+        }
+
         await sendTelegramMessage(chatId, '👋 Educontest platformasiga xush kelibsiz!\n\n📱 Kirish uchun telefon raqamingizni yuboring:', {
           keyboard: [[{ text: '📱 Telefon raqamni yuborish', request_contact: true }]],
           resize_keyboard: true,
@@ -836,6 +888,32 @@ const handleInPayWebhook = async (req, res) => {
             }).catch(() => {});
           } catch (bErr) {
             console.error('[InPay Webhook Credit Error]:', bErr?.message);
+          }
+
+          // Check if this was an Education Center subscription payment
+          if (record.note && record.note.startsWith('center_sub:')) {
+            try {
+              const parts = record.note.split(':');
+              const centerId = parts[1];
+              if (centerId) {
+                await supabase.from('center_applications')
+                  .update({ payment_status: 'completed', status: 'PENDING_APPROVAL', updated_at: new Date().toISOString() })
+                  .eq('center_id', centerId);
+                await supabase.from('center_subscriptions')
+                  .update({ status: 'ACTIVE', updated_at: new Date().toISOString() })
+                  .eq('center_id', centerId);
+                await supabase.from('center_audit_logs').insert({
+                  center_id: centerId,
+                  actor_id: record.user_id,
+                  action: 'SUBSCRIPTION_PAID',
+                  resource_type: 'subscription',
+                  metadata: { order_id: orderId, amount: numAmount }
+                });
+                console.log(`💳 [InPay Webhook] Center Subscription paid for center: ${centerId}`);
+              }
+            } catch (csErr) {
+              console.error('[InPay Center Sub Activation Error]:', csErr?.message);
+            }
           }
         }
       }
@@ -1415,11 +1493,35 @@ app.get('/api/user-cards', authRequired, async (req, res) => {
   res.json(data || []);
 });
 
+const multer = require('multer');
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB max
+});
+
+// ==============================================================================
+// EDUCATION CENTERS (B2B) SYSTEM ROUTES
+// ==============================================================================
+const setupCenterRoutes = require('./centerRoutes.cjs');
+setupCenterRoutes(app, {
+  supabase,
+  pgPool,
+  upload,
+  authRequired,
+  adminRequired,
+  setAuthCookies,
+  sendTelegramMessage,
+  getInPayBearerToken,
+  INPAY_MERCHANT_ID,
+  INPAY_MERCHANT_TOKEN
+});
+
 /**
  * ADMIN: Generic Data Access
  */
-app.get('/api/admin/:table', adminRequired, async (req, res) => {
+app.get('/api/admin/:table', adminRequired, async (req, res, next) => {
   const { table } = req.params;
+  if (table === 'centers' || table.startsWith('centers')) return next();
   const { data, error } = await supabase.from(table).select('*').order('created_at', { ascending: false }).limit(100);
   if (error) return res.status(400).json(error);
   res.json(data);
@@ -1482,11 +1584,7 @@ app.delete('/api/admin/blog/:id', async (req, res) => {
 /**
  * STORAGE: Upload Proxy
  */
-const multer = require('multer');
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 } // 100MB max
-});
+
 
 app.post('/api/storage/upload/:bucket', authRequired, upload.single('file'), async (req, res) => {
   try {
@@ -1910,6 +2008,8 @@ app.get('/api/mock-tests/:id/public-results', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+
 
 /**
  * DATA: Test Folders
