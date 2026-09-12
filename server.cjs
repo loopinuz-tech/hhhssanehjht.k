@@ -407,7 +407,7 @@ const authRequired = async (req, res, next) => {
 const adminRequired = async (req, res, next) => {
   await authRequired(req, res, async () => {
     const { data: role } = await supabase.from('user_roles').select('role').eq('user_id', req.user.id).single();
-    if (role?.role !== 'admin' && role?.role !== 'sub_admin') {
+    if (role?.role !== 'admin' && role?.role !== 'sub_admin' && role?.role !== 'super_admin') {
       return res.status(403).json({ error: 'Admin access required' });
     }
     next();
