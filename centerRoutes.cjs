@@ -2640,13 +2640,28 @@ module.exports = function setupCenterRoutes(app, deps) {
 
       // 2. Fetch available mock tests assigned to student's classes
       let availableTests = [];
-      if (classIds.length > 0) {
+      if (classIds.length > 0 || centerIds.length > 0) {
+        // Fetch tests linked to specific classes
         const { data: testLinks } = await supabase
           .from('center_test_classes')
           .select('center_test_id, class_id')
           .in('class_id', classIds);
 
-        const testIds = [...new Set((testLinks || []).map(tl => tl.center_test_id))];
+        const linkedTestIds = (testLinks || []).map(tl => tl.center_test_id);
+
+        // Also fetch tests with assign_all_classes = true for student's centers
+        let allClassTestIds = [];
+        if (centerIds.length > 0) {
+          const { data: allClassTests } = await supabase
+            .from('center_tests')
+            .select('id')
+            .eq('assign_all_classes', true)
+            .in('center_id', centerIds)
+            .in('status', ['ACTIVE', 'SCHEDULED']);
+          allClassTestIds = (allClassTests || []).map(t => t.id);
+        }
+
+        const testIds = [...new Set([...linkedTestIds, ...allClassTestIds])];
 
         if (testIds.length > 0) {
           const { data: tests } = await supabase
