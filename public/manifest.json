@@ -1,0 +1,27 @@
+{
+  "short_name": "EduContest",
+  "name": "EduContest — Milliy Sertifikat va Online Testlar Platformasi",
+  "description": "Milliy Sertifikat imtihonlariga tayyorlanayotgan o'quvchilar uchun Matematika, Ona Tili va Adabiyot, Tarix, Biologiya fanlari bo'yicha testlar platformasi.",
+  "icons": [
+    {
+      "src": "/4.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/4.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    }
+  ],
+  "start_url": "/dashboard",
+  "scope": "/",
+  "background_color": "#ffffff",
+  "theme_color": "#E8192C",
+  "display": "standalone",
+  "orientation": "portrait",
+  "categories": ["education"],
+  "lang": "uz"
+}

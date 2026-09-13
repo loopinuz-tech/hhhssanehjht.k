@@ -406,11 +406,34 @@ const authRequired = async (req, res, next) => {
 
 const adminRequired = async (req, res, next) => {
   await authRequired(req, res, async () => {
-    const { data: role } = await supabase.from('user_roles').select('role').eq('user_id', req.user.id).single();
-    if (role?.role !== 'admin' && role?.role !== 'sub_admin' && role?.role !== 'super_admin') {
+    try {
+      let roleName = null;
+      if (pgPool) {
+        const { rows } = await pgPool.query('SELECT role FROM user_roles WHERE user_id = $1', [req.user.id]);
+        if (rows.length > 0) {
+          const roles = rows.map(r => r.role);
+          if (roles.includes('admin')) roleName = 'admin';
+          else if (roles.includes('super_admin')) roleName = 'super_admin';
+          else if (roles.includes('sub_admin')) roleName = 'sub_admin';
+          else roleName = roles[0];
+        }
+      }
+      if (!roleName) {
+        const { data: role } = await supabase.from('user_roles').select('role').eq('user_id', req.user.id).maybeSingle();
+        roleName = role?.role;
+      }
+      const isSuperAdminEmail = req.user?.email === 'xudayberganovbackend@gmail.com';
+      if (roleName === 'admin' || roleName === 'sub_admin' || roleName === 'super_admin' || isSuperAdminEmail) {
+        return next();
+      }
+      return res.status(403).json({ error: 'Admin access required' });
+    } catch (err) {
+      console.error('adminRequired error:', err);
+      if (req.user?.email === 'xudayberganovbackend@gmail.com') {
+        return next();
+      }
       return res.status(403).json({ error: 'Admin access required' });
     }
-    next();
   });
 };
 
@@ -431,12 +454,29 @@ app.get('/api/auth/session', async (req, res) => {
     if (error || !user) return res.json({ user: null, profile: null });
 
     const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).maybeSingle();
-    const { data: roles } = await supabase.from('user_roles').select('role').eq('user_id', user.id);
+
+    let userRoles = [];
+    if (pgPool) {
+      try {
+        const { rows } = await pgPool.query('SELECT role FROM user_roles WHERE user_id = $1', [user.id]);
+        userRoles = rows.map(r => r.role);
+      } catch (e) {
+        console.error('Failed to query user_roles via pgPool:', e.message);
+      }
+    }
+    if (userRoles.length === 0) {
+      const { data: roles } = await supabase.from('user_roles').select('role').eq('user_id', user.id);
+      userRoles = roles?.map(r => r.role) || [];
+    }
+
+    if (user.email === 'xudayberganovbackend@gmail.com' && !userRoles.includes('admin')) {
+      userRoles.push('admin');
+    }
 
     res.json({
       user,
       profile,
-      roles: roles?.map(r => r.role) || []
+      roles: userRoles
     });
   } catch (err) {
     console.error('Session error:', err);
@@ -478,6 +518,19 @@ app.post('/api/auth/google', async (req, res) => {
     token: credential,
   });
   if (error) return res.status(401).json(error);
+
+  // Check if newly created user (within 30 seconds)
+  if (data.user && (new Date().getTime() - new Date(data.user.created_at).getTime() < 30000)) {
+    notifyAdminNewUser({
+      fullName: data.user.user_metadata?.full_name || data.user.user_metadata?.name || 'Google Foydalanuvchi',
+      email: data.user.email,
+      phone: data.user.phone || data.user.user_metadata?.phone,
+      role: "O'quvchi",
+      userId: data.user.id,
+      authMethod: 'Google OAuth'
+    });
+  }
+
   setAuthCookies(res, data.session, req);
   res.json({ user: data.user });
 });
@@ -511,6 +564,45 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     });
   } catch (err) {
     console.error('Telegram send message error:', err);
+  }
+}
+
+const ADMIN_NOTIFICATION_CHAT_ID = process.env.ADMIN_TELEGRAM_CHAT_ID || '5717695158';
+
+async function notifyAdminNewUser({ fullName, phone, email, role, userId, authMethod }) {
+  try {
+    const formattedTime = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
+    const text = `🔔 <b>Yangi foydalanuvchi ro'yxatdan o'tdi!</b>\n\n` +
+      `👤 <b>F.I.Sh:</b> ${fullName || "Noma'lum"}\n` +
+      `📞 <b>Telefon:</b> ${phone || "Mavjud emas"}\n` +
+      `📧 <b>Email:</b> ${email || "Mavjud emas"}\n` +
+      `🎭 <b>Roli:</b> ${role || "O'quvchi"}\n` +
+      `🔐 <b>Ro'yxatdan o'tish usuli:</b> ${authMethod || "Telegram OTP"}\n` +
+      `🆔 <b>ID:</b> <code>${userId || "-"}</code>\n` +
+      `⏰ <b>Vaqt:</b> ${formattedTime}`;
+
+    await sendTelegramMessage(ADMIN_NOTIFICATION_CHAT_ID, text);
+  } catch (err) {
+    console.error('[Admin Notify Error]:', err?.message);
+  }
+}
+
+async function notifyAdminNewCenter({ centerName, ownerName, phone, email, region, district, planName, planPrice, username, isTrial }) {
+  try {
+    const formattedTime = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
+    const text = `🏢 <b>Yangi O'quv Markazi ariza topshirdi!</b>\n\n` +
+      `🏛 <b>Nomi:</b> ${centerName}\n` +
+      `👤 <b>Rahbar:</b> ${ownerName || "Noma'lum"}\n` +
+      `📞 <b>Telefon:</b> ${phone || "Mavjud emas"}\n` +
+      `📧 <b>Email:</b> ${email || "Mavjud emas"}\n` +
+      `📍 <b>Hudud:</b> ${region || ""} ${district ? `/ ${district}` : ""}\n` +
+      `💼 <b>Tarif:</b> ${planName || "Trial"} (${isTrial ? "14 kun bepul test sinov" : Number(planPrice).toLocaleString() + " so'm"})\n` +
+      `🌐 <b>Havola:</b> educontest.uz/c/${username || ""}\n` +
+      `⏰ <b>Vaqt:</b> ${formattedTime}`;
+
+    await sendTelegramMessage(ADMIN_NOTIFICATION_CHAT_ID, text);
+  } catch (err) {
+    console.error('[Admin Notify Error]:', err?.message);
   }
 }
 
@@ -1256,6 +1348,17 @@ app.post('/api/auth/telegram/verify-otp', async (req, res) => {
       }, { onConflict: 'user_id' });
     }
 
+    if (!loginAttempt?.session) {
+      notifyAdminNewUser({
+        fullName: finalName,
+        phone: cleanPhone,
+        email: targetEmail,
+        role: "O'quvchi",
+        userId: finalUserId,
+        authMethod: "Telegram Bot (/start OTP)"
+      });
+    }
+
     setAuthCookies(res, signInData.session, req);
     return res.json({ success: true, user: signInData.user, session: signInData.session });
   } catch (err) {
@@ -1366,6 +1469,15 @@ app.post('/api/auth/register/verify', async (req, res) => {
     if (role && role !== 'user') {
       await supabase.from('user_roles').upsert({ user_id: signInData.user.id, role });
     }
+
+    notifyAdminNewUser({
+      fullName: finalName,
+      phone: finalPhone,
+      email: email,
+      role: role === 'teacher' ? "O'qituvchi" : role === 'center' ? "O'quv markazi" : "O'quvchi",
+      userId: signInData.user.id,
+      authMethod: "Ro'yxatdan o'tish (Telegram OTP)"
+    });
 
     setAuthCookies(res, signInData.session, req);
     return res.json({ success: true, user: signInData.user, session: signInData.session });
@@ -1511,6 +1623,8 @@ setupCenterRoutes(app, {
   adminRequired,
   setAuthCookies,
   sendTelegramMessage,
+  notifyAdminNewCenter,
+  notifyAdminNewUser,
   getInPayBearerToken,
   INPAY_MERCHANT_ID,
   INPAY_MERCHANT_TOKEN

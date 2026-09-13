@@ -1,0 +1,15 @@
+User-agent: *
+Allow: /
+
+Disallow: /login
+Disallow: /register
+Disallow: /dashboard
+Disallow: /admin
+Disallow: /profile
+Disallow: /settings
+Disallow: /student/
+
+Sitemap: https://educontest.uz/sitemap.xml
+Sitemap: https://educontest.uz/sitemap_index.xml
+Sitemap: https://mock.educontest.uz/sitemap.xml
+Sitemap: https://teacher.educontest.uz/sitemap.xml

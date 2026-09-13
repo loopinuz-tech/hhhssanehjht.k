@@ -32,6 +32,211 @@ function generateClassCode() {
 /**
  * Server-side Rasch model computation
  */
+/**
+ * Math and Text Answer Evaluation Utilities
+ */
+function normalizeMathAnswer(val) {
+  if (val === undefined || val === null) return '';
+  let str = String(val).trim().toLowerCase();
+  str = str.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1/$2');
+  str = str.replace(/\\\(/g, '').replace(/\\\)/g, '');
+  str = str.replace(/\\\[/g, '').replace(/\\\]/g, '');
+  str = str.replace(/\$/g, '');
+  str = str.replace(/\s+/g, '');
+  return str;
+}
+
+function evalMathExpr(expr) {
+  if (!expr || typeof expr !== 'string') return null;
+  const sanitized = expr.trim().replace(/,/g, '.');
+  if (/^-?\d+(\.\d+)?$/.test(sanitized)) {
+    return parseFloat(sanitized);
+  }
+  const fracMatch = sanitized.match(/^(-?\d+(\.\d+)?)\/(\d+(\.\d+)?)$/);
+  if (fracMatch) {
+    const num = parseFloat(fracMatch[1]);
+    const den = parseFloat(fracMatch[3]);
+    if (den !== 0) return num / den;
+  }
+  return null;
+}
+
+function compareSingleValue(userVal, correctVal) {
+  if (userVal === undefined || userVal === null || correctVal === undefined || correctVal === null) return false;
+  const uStr = String(userVal).trim();
+  const cStr = String(correctVal).trim();
+  if (!uStr && !cStr) return true;
+  if (!uStr || !cStr) return false;
+
+  // Direct case-insensitive match
+  if (uStr.toLowerCase() === cStr.toLowerCase()) return true;
+
+  // Space-stripped match
+  if (uStr.replace(/\s+/g, '').toLowerCase() === cStr.replace(/\s+/g, '').toLowerCase()) return true;
+
+  // Math normalized match
+  const uNorm = normalizeMathAnswer(uStr);
+  const cNorm = normalizeMathAnswer(cStr);
+  if (uNorm && cNorm && uNorm === cNorm) return true;
+
+  // Numeric float evaluation
+  const uNum = evalMathExpr(uStr);
+  const cNum = evalMathExpr(cStr);
+  if (uNum !== null && cNum !== null && !isNaN(uNum) && !isNaN(cNum)) {
+    if (Math.abs(uNum - cNum) < 1e-5) return true;
+  }
+
+  return false;
+}
+
+function checkIsQuestionCorrect(q, userAns) {
+  if (userAns === undefined || userAns === null || userAns === '') return false;
+  const type = (q.type || 'multiple_choice').toLowerCase();
+  const corr = q.correct_answer;
+
+  if (typeof userAns === 'object' && userAns !== null && !Array.isArray(userAns) && ('is_correct' in userAns || 'isCorrect' in userAns)) {
+    return Boolean(userAns.is_correct || userAns.isCorrect);
+  }
+
+  // 1. Multiple Choice / Single
+  if (type === 'multiple_choice' || type === 'single') {
+    if (typeof corr === 'string') {
+      return String(userAns).trim().toUpperCase() === corr.trim().toUpperCase();
+    }
+    if (Array.isArray(corr)) {
+      return corr.some(c => String(userAns).trim().toUpperCase() === String(c).trim().toUpperCase());
+    }
+    return String(userAns).trim().toLowerCase() === String(corr).trim().toLowerCase();
+  }
+
+  // 2. Multiple Select (Multi-choice)
+  if (type === 'multiple_select' || type === 'multi') {
+    let uList = [];
+    if (Array.isArray(userAns)) uList = userAns;
+    else if (typeof userAns === 'string') uList = userAns.split(',').map(s => s.trim()).filter(Boolean);
+
+    let cList = [];
+    if (Array.isArray(corr)) cList = corr;
+    else if (typeof corr === 'string') cList = corr.split(',').map(s => s.trim()).filter(Boolean);
+
+    const uSet = new Set(uList.map(s => String(s).trim().toUpperCase()));
+    const cSet = new Set(cList.map(s => String(s).trim().toUpperCase()));
+    if (uSet.size !== cSet.size) return false;
+    for (const item of uSet) {
+      if (!cSet.has(item)) return false;
+    }
+    return true;
+  }
+
+  // 3. True / False
+  if (type === 'true_false') {
+    const normalizeTf = (v) => {
+      const s = String(v).trim().toLowerCase();
+      if (['to\'g\'ri', "to'g'ri", 'togri', 'true', 't', '1', 'ha'].includes(s)) return 'true';
+      if (['yolg\'on', "yolg'on", 'yolgon', 'false', 'f', '0', 'yoq', "yo'q"].includes(s)) return 'false';
+      return s;
+    };
+    return normalizeTf(userAns) === normalizeTf(corr);
+  }
+
+  // 4. Yes / No
+  if (type === 'yes_no') {
+    const normalizeYn = (v) => {
+      const s = String(v).trim().toLowerCase();
+      if (['ha', 'yes', 'y', '1', 'true'].includes(s)) return 'yes';
+      if (['yoq', "yo'q", 'no', 'n', '0', 'false'].includes(s)) return 'no';
+      return s;
+    };
+    return normalizeYn(userAns) === normalizeYn(corr);
+  }
+
+  // 5. Matching (Moslashtirish)
+  if (type === 'matching') {
+    if (typeof userAns === 'string' && typeof corr === 'string') {
+      return userAns.trim().toUpperCase() === corr.trim().toUpperCase();
+    }
+    if (typeof userAns === 'object' && userAns !== null && typeof corr === 'object' && corr !== null) {
+      const corrKeys = Object.keys(corr);
+      if (corrKeys.length === 0) return false;
+      for (const k of corrKeys) {
+        const uVal = String(userAns[k] || userAns[k.toLowerCase()] || userAns[k.toUpperCase()] || '').trim().toUpperCase();
+        const cVal = String(corr[k]).trim().toUpperCase();
+        if (uVal !== cVal) return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // 6. Fill in Blanks / Written (Bo'sh joylar)
+  if (type === 'fill_blanks' || type === 'written') {
+    const blanks = q.metadata?.blanks;
+    if (Array.isArray(blanks) && blanks.length > 0) {
+      for (let i = 0; i < blanks.length; i++) {
+        const b = blanks[i];
+        const key = typeof b === 'string' ? String.fromCharCode(97 + i) : (b.key || String.fromCharCode(97 + i));
+        let uVal = '';
+        if (typeof userAns === 'object' && userAns !== null) {
+          uVal = userAns[key] || userAns[key.toUpperCase()] || userAns[String(i)] || '';
+        } else if (blanks.length === 1) {
+          uVal = String(userAns);
+        }
+
+        let alternatives = [];
+        if (typeof b === 'object' && b !== null && Array.isArray(b.alternatives)) {
+          alternatives = b.alternatives;
+        } else if (typeof b === 'string') {
+          alternatives = b.split('|').map(s => s.trim()).filter(Boolean);
+        } else if (corr && typeof corr === 'object' && corr[key]) {
+          alternatives = Array.isArray(corr[key]) ? corr[key] : String(corr[key]).split('|').map(s => s.trim()).filter(Boolean);
+        }
+
+        const matched = alternatives.some(alt => compareSingleValue(uVal, alt));
+        if (!matched) return false;
+      }
+      return true;
+    }
+
+    if (typeof corr === 'object' && corr !== null && !Array.isArray(corr)) {
+      const keys = Object.keys(corr);
+      for (const k of keys) {
+        const uVal = (typeof userAns === 'object' && userAns !== null) ? (userAns[k] || userAns[k.toLowerCase()] || userAns[k.toUpperCase()] || '') : String(userAns);
+        const acceptable = Array.isArray(corr[k]) ? corr[k] : String(corr[k]).split('|').map(s => s.trim()).filter(Boolean);
+        const matched = acceptable.some(alt => compareSingleValue(uVal, alt));
+        if (!matched) return false;
+      }
+      return true;
+    }
+
+    const acceptable = Array.isArray(corr) ? corr : String(corr || '').split('|').map(s => s.trim()).filter(Boolean);
+    return acceptable.some(alt => compareSingleValue(userAns, alt));
+  }
+
+  // 7. Short Answer / Numerical (Qisqa javob va raqamli)
+  if (type === 'short_answer' || type === 'numerical') {
+    let acceptable = [];
+    if (Array.isArray(corr)) acceptable = corr;
+    else if (typeof corr === 'string') acceptable = corr.split(/\||,|\bor\b/i).map(s => s.trim()).filter(Boolean);
+    else acceptable = [String(corr)];
+
+    return acceptable.some(alt => compareSingleValue(userAns, alt));
+  }
+
+  // 8. Essay (Insho - mustaqil baholanadi)
+  if (type === 'essay') {
+    return false;
+  }
+
+  if (typeof corr === 'string') {
+    return compareSingleValue(userAns, corr);
+  }
+  if (typeof corr === 'object' && corr !== null) {
+    return JSON.stringify(userAns) === JSON.stringify(corr);
+  }
+
+  return false;
+}
+
 function computeRaschModel(questions = [], submissions = []) {
   if (!questions || questions.length === 0 || !submissions || submissions.length === 0) {
     return {
@@ -55,17 +260,7 @@ function computeRaschModel(questions = [], submissions = []) {
       const userAns = sub.answers?.[qNum] ?? sub.answers?.[String(qNum)];
       if (userAns !== undefined && userAns !== null && userAns !== "") {
         attemptedCount++;
-        let isCorrect = false;
-        if (typeof userAns === "object") {
-          isCorrect = Boolean(userAns.is_correct || userAns.isCorrect);
-        } else {
-          const corr = q.correct_answer;
-          if (typeof corr === "string") {
-            isCorrect = String(userAns).trim().toUpperCase() === String(corr).trim().toUpperCase();
-          } else if (typeof corr === "object") {
-            isCorrect = JSON.stringify(userAns) === JSON.stringify(corr);
-          }
-        }
+        const isCorrect = checkIsQuestionCorrect(q, userAns);
         if (isCorrect) correctCount++;
       }
     });
@@ -116,17 +311,7 @@ function computeRaschModel(questions = [], submissions = []) {
       const qNum = q.question_number || (idx + 1);
       const userAns = sub.answers?.[qNum] ?? sub.answers?.[String(qNum)];
       if (userAns !== undefined && userAns !== null && userAns !== "") {
-        let isCorrect = false;
-        if (typeof userAns === "object") {
-          isCorrect = Boolean(userAns.is_correct || userAns.isCorrect);
-        } else {
-          const corr = q.correct_answer;
-          if (typeof corr === "string") {
-            isCorrect = String(userAns).trim().toUpperCase() === String(corr).trim().toUpperCase();
-          } else if (typeof corr === "object") {
-            isCorrect = JSON.stringify(userAns) === JSON.stringify(corr);
-          }
-        }
+        const isCorrect = checkIsQuestionCorrect(q, userAns);
         if (isCorrect) {
           raschScore += (qStatsMap[qNum]?.weight || 1.0);
         }
@@ -2131,6 +2316,120 @@ module.exports = function setupCenterRoutes(app, deps) {
     }
   });
 
+  /**
+   * Update Mock Test
+   * PATCH /api/center/tests/:id
+   * PUT /api/center/tests/:id
+   */
+  const handleUpdateCenterTest = async (req, res) => {
+    try {
+      const { id } = req.params;
+      const centerId = req.center.id;
+      const {
+        title,
+        description,
+        subject,
+        source_test_id,
+        mode,
+        duration_minutes,
+        attempt_limit,
+        result_policy,
+        result_release_policy,
+        exam_start_at,
+        exam_end_at,
+        auto_submit_at_exam_end,
+        assign_all_classes,
+        class_ids,
+        custom_questions,
+        publish_now,
+        status
+      } = req.body;
+
+      const { data: existingTest, error: fErr } = await supabase
+        .from('center_tests')
+        .select('*')
+        .eq('id', id)
+        .eq('center_id', centerId)
+        .single();
+
+      if (fErr || !existingTest) {
+        return res.status(404).json({ error: 'Mock test topilmadi' });
+      }
+
+      const testMode = mode || existingTest.mode;
+      const startAt = exam_start_at !== undefined ? exam_start_at : existingTest.exam_start_at;
+      const endAt = exam_end_at !== undefined ? exam_end_at : existingTest.exam_end_at;
+      if (testMode === 'exam' && (!startAt || !endAt)) {
+        return res.status(400).json({ error: "Imtihon rejimi uchun boshlanish va tugash vaqtlari kiritilishi shart" });
+      }
+
+      let newStatus = status || existingTest.status;
+      if (publish_now) {
+        newStatus = (testMode === 'exam' && startAt && new Date(startAt) > new Date())
+          ? 'SCHEDULED'
+          : 'ACTIVE';
+      }
+
+      const updateData = {
+        updated_at: new Date().toISOString()
+      };
+      if (title !== undefined) updateData.title = title.trim();
+      if (description !== undefined) updateData.description = description || null;
+      if (subject !== undefined) updateData.subject = subject || null;
+      if (source_test_id !== undefined) updateData.source_test_id = source_test_id || null;
+      if (mode !== undefined) updateData.mode = mode;
+      if (duration_minutes !== undefined) updateData.duration_minutes = Number(duration_minutes) || 120;
+      if (attempt_limit !== undefined) updateData.attempt_limit = Number(attempt_limit) || 1;
+      if (result_policy !== undefined) updateData.result_policy = result_policy;
+      if (result_release_policy !== undefined) updateData.result_release_policy = result_release_policy;
+      if (exam_start_at !== undefined) updateData.exam_start_at = exam_start_at || null;
+      if (exam_end_at !== undefined) updateData.exam_end_at = exam_end_at || null;
+      if (auto_submit_at_exam_end !== undefined) updateData.auto_submit_at_exam_end = Boolean(auto_submit_at_exam_end);
+      if (assign_all_classes !== undefined) updateData.assign_all_classes = Boolean(assign_all_classes);
+      if (custom_questions !== undefined) updateData.custom_questions = custom_questions || [];
+      if (newStatus !== undefined) updateData.status = newStatus;
+
+      const { data: updatedTest, error: uErr } = await supabase
+        .from('center_tests')
+        .update(updateData)
+        .eq('id', id)
+        .eq('center_id', centerId)
+        .select()
+        .single();
+
+      if (uErr) throw uErr;
+
+      if (Array.isArray(class_ids)) {
+        await supabase.from('center_test_classes').delete().eq('center_test_id', id);
+        if (class_ids.length > 0) {
+          const classInserts = class_ids.map(cid => ({
+            center_test_id: id,
+            center_id: centerId,
+            class_id: cid
+          }));
+          await supabase.from('center_test_classes').insert(classInserts);
+        }
+      }
+
+      await supabase.from('center_audit_logs').insert({
+        center_id: centerId,
+        actor_id: req.user.id,
+        action: 'TEST_UPDATED',
+        resource_type: 'center_test',
+        resource_id: id,
+        metadata: { title: updatedTest.title, mode: updatedTest.mode, status: updatedTest.status }
+      });
+
+      return res.json({ success: true, test: updatedTest, message: "Mock test muvaffaqiyatli yangilandi!" });
+    } catch (err) {
+      console.error('[Update Center Test Error]:', err);
+      res.status(500).json({ error: err.message });
+    }
+  };
+
+  app.patch('/api/center/tests/:id', centerAuthRequired, requirePerm('EDIT_TEST'), handleUpdateCenterTest);
+  app.put('/api/center/tests/:id', centerAuthRequired, requirePerm('EDIT_TEST'), handleUpdateCenterTest);
+
   app.get('/api/center/tests/:id', centerAuthRequired, async (req, res) => {
     try {
       const { id } = req.params;
@@ -2922,7 +3221,7 @@ module.exports = function setupCenterRoutes(app, deps) {
       if (test.source_test_id) {
         const { data: qData } = await supabase
           .from('mock_test_questions')
-          .select('id, question_number, question_text, question_image, question_subtext, type, metadata, explanation')
+          .select('id, question_number, question_text, question_image, question_subtext, type, metadata, explanation, points_a, points_b, difficulty')
           .eq('test_id', test.source_test_id)
           .order('question_number', { ascending: true });
 
@@ -2932,9 +3231,25 @@ module.exports = function setupCenterRoutes(app, deps) {
           id: q.id || Math.random().toString(),
           question_number: q.question_number,
           question_text: q.question_text,
-          question_image: q.question_image,
+          question_image: q.question_image || q.image_url,
+          question_subtext: q.question_subtext,
           type: q.type,
-          metadata: q.metadata
+          metadata: q.metadata,
+          sub_questions: Array.isArray(q.sub_questions) ? q.sub_questions.map(sq => ({
+            id: sq.id || Math.random().toString(),
+            question_number: sq.question_number,
+            question_text: sq.question_text,
+            question_image: sq.question_image || sq.image_url,
+            question_subtext: sq.question_subtext,
+            type: sq.type,
+            metadata: sq.metadata,
+            points_a: sq.points_a,
+            points_b: sq.points_b,
+            difficulty: sq.difficulty
+          })) : undefined,
+          points_a: q.points_a,
+          points_b: q.points_b,
+          difficulty: q.difficulty
         }));
       }
 
@@ -2984,29 +3299,73 @@ module.exports = function setupCenterRoutes(app, deps) {
         questions = test.custom_questions || [];
       }
 
-      let correctCount = 0;
-      const totalQuestions = questions.length;
-
+      // Flatten any sub_questions from reading passages
+      let flatQuestions = [];
       questions.forEach((q, idx) => {
-        const qNum = q.question_number || (idx + 1);
-        const userAns = answers?.[qNum] ?? answers?.[String(qNum)];
-        if (userAns !== undefined && userAns !== null && userAns !== "") {
-          let isCorrect = false;
-          if (typeof userAns === "object") {
-            isCorrect = Boolean(userAns.is_correct || userAns.isCorrect);
-          } else {
-            const corr = q.correct_answer;
-            if (typeof corr === "string") {
-              isCorrect = String(userAns).trim().toUpperCase() === String(corr).trim().toUpperCase();
-            } else if (typeof corr === "object") {
-              isCorrect = JSON.stringify(userAns) === JSON.stringify(corr);
-            }
-          }
-          if (isCorrect) correctCount++;
+        if (q.type === 'reading_passage' && Array.isArray(q.sub_questions) && q.sub_questions.length > 0) {
+          q.sub_questions.forEach(sq => flatQuestions.push(sq));
+        } else {
+          flatQuestions.push(q);
         }
       });
 
+      let correctCount = 0;
+      const totalQuestions = flatQuestions.length || questions.length;
+      const questionResults = [];
+
+      flatQuestions.forEach((q, idx) => {
+        const qNum = q.question_number || (idx + 1);
+        const userAns = answers?.[qNum] ?? answers?.[String(qNum)];
+        const qType = (q.type || 'multiple_choice').toLowerCase();
+        const isCorrect = checkIsQuestionCorrect(q, userAns);
+
+        if (isCorrect) correctCount++;
+        questionResults.push({
+          question_number: qNum,
+          type: qType,
+          user_answer: userAns,
+          is_correct: isCorrect,
+          correct_answer: q.correct_answer
+        });
+      });
+
       const score = correctCount;
+
+      // Calculate initial Rasch Score & Grade
+      let raschSum = 0;
+      let maxRaschSum = 0;
+      questions.forEach((q, idx) => {
+        const qNum = q.question_number || (idx + 1);
+        let baseWeight = 1.0;
+        if (qNum >= 34) baseWeight = 2.0;
+        else if (qNum >= 21) baseWeight = 1.5;
+        else baseWeight = 1.0;
+        maxRaschSum += baseWeight;
+        if (questionResults[idx]?.is_correct) {
+          raschSum += baseWeight;
+        }
+      });
+      const calculatedRaschScore = Number(raschSum.toFixed(1));
+      const maxPossibleRasch = Number(maxRaschSum.toFixed(1)) || 1;
+      const relativeRaschPct = Math.min(100, Math.round((calculatedRaschScore / maxPossibleRasch) * 100));
+      let raschGrade = 'C';
+      if (correctCount === 0 || calculatedRaschScore === 0) {
+        raschGrade = 'D';
+      } else if (relativeRaschPct >= 90) {
+        raschGrade = 'A+';
+      } else if (relativeRaschPct >= 78) {
+        raschGrade = 'A';
+      } else if (relativeRaschPct >= 66) {
+        raschGrade = 'B+';
+      } else if (relativeRaschPct >= 54) {
+        raschGrade = 'B';
+      } else if (relativeRaschPct >= 42) {
+        raschGrade = 'C+';
+      } else if (relativeRaschPct >= 30) {
+        raschGrade = 'C';
+      } else {
+        raschGrade = 'D';
+      }
 
       // Update attempt
       await supabase
@@ -3016,6 +3375,9 @@ module.exports = function setupCenterRoutes(app, deps) {
           score,
           correct_answers: correctCount,
           total_questions: totalQuestions,
+          rasch_score: calculatedRaschScore,
+          relative_rasch_percentage: relativeRaschPct,
+          rasch_grade: raschGrade,
           completed_at: new Date().toISOString(),
           status: 'COMPLETED'
         })
@@ -3041,7 +3403,10 @@ module.exports = function setupCenterRoutes(app, deps) {
         score,
         correct_answers: correctCount,
         total_questions: totalQuestions,
-        percentage: Math.round((correctCount / (totalQuestions || 1)) * 100)
+        percentage: Math.round((correctCount / (totalQuestions || 1)) * 100),
+        rasch_score: calculatedRaschScore,
+        rasch_grade: raschGrade,
+        breakdown: questionResults
       });
     } catch (err) {
       console.error('[Submit Test Error]:', err);

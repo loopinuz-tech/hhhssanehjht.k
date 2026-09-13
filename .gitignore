@@ -1,6 +1,12 @@
 node_modules
+.env*
 .env
 .env.local
+.env.backend
+*.env
+backend/.env*
 dist
 logs
 *.log
+supabase/.temp/
+*.db
